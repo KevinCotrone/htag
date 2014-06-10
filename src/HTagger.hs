@@ -6,7 +6,7 @@ module HTagger where
 import           HTagger.Internal
 
 import           CorePrelude
-
+import Control.Monad
 import qualified Data.Foldable             as F
 import qualified Data.Map.Strict           as M
 import qualified Data.Sequence             as S
@@ -48,7 +48,7 @@ listAllDirectorContentsSeq fp = do
     else do
       listContents <- FS.listDirectory fp
       let contents = S.fromList listContents
-      cContents <- mapM listAllDirectorContentsSeq contents
+      cContents <- TR.mapM listAllDirectorContentsSeq contents
       return $ contents S.>< concatSeq cContents
 
 
@@ -74,9 +74,9 @@ insertSongIntoMap songMap song =
 songFromFilePath :: FP.FilePath -> IO (Maybe Song)
 songFromFilePath fp = do
   let mText = eitherToMaybe $ T.unpack <$> OS.toText fp
-  mTagFile <- openMaybe mText
-  mTag <- tagMaybe mTagFile
-  songFromTag fp mTag
+  mTagFile <- TR.traverse TL.open mText
+  mTag <- TR.traverse TL.tag (join mTagFile)
+  TR.traverse (songFromTag fp) (join mTag)
 
 
 tagMaybe :: Maybe TL.TagFile -> IO (Maybe TL.Tag)
@@ -91,17 +91,26 @@ eitherToMaybe :: Either a b -> Maybe b
 eitherToMaybe (Right r) = Just r
 eitherToMaybe (Left _) = Nothing
 
-songFromTag :: FP.FilePath -> Maybe TL.Tag -> IO (Maybe Song)
-songFromTag fp (Just tag) = do
+songFromTag :: FP.FilePath -> TL.Tag -> IO Song
+songFromTag fp tag = do
   alb <- TL.album tag
   art <- TL.artist tag
   ttl <- TL.title tag
   yr <- TL.year tag
-  return . Just $ Song ttl yr fp (Album alb) (Artist art)
-songFromTag _ _ = return Nothing
+  return $ Song ttl yr fp (Album alb) (Artist art)
+
+--traverseCreateFPArtist :: FP.FilePath -> S.Seq 
+
+createPath :: FP.FilePath -> S.Seq FP.FilePath -> Song -> S.Seq FP.FilePath
+createPath baseFP lastSeq song =
+  let alb = OS.fromText . T.pack . albumName $ songAlbum song
+      art = OS.fromText . T.pack . artistName $ songArtist song
+      fname = FP.filename $ songOldPath song
+  in lastSeq S.|> baseFP FP.</> art FP.</> alb FP.</> fname
 
 
-copySongsToDir :: FP.FilePath -> SongMap -> IO (Maybe FP.FilePath)
-copySongsToDir fp sm = do
-  songMap <- createSongMap fp
-  undefined
+--copySongsToDir :: FP.FilePath -> FP.FilePath -> SongMap -> IO (Maybe ())
+--copySongsToDir currDir goalDir sm = do
+--  songMap <- createSongMap currDir
+--  let foldList = F.toList $ M.foldl (createPath goalDir) S.empty songMap
+--  return foldList
